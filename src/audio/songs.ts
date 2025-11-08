@@ -1,4 +1,4 @@
-import type { Song, Section, ErrorLevel } from "./type";
+import type { Song, Section, ErrorLevel } from "../interfaces/sound";
 
 const frag = (file: string) => ({
   module: require(`../../assets/sounds/${file}`),
