@@ -5,8 +5,9 @@ export default function useControlGame() {
     const controlContextData = useContext(ControlContext);
 
     if (!controlContextData) {
-        return {} ;
+        throw new Error("useControlGame must be used within ControlContextProvider");
     }
+
 
     return controlContextData;
 }

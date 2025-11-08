@@ -1,7 +1,8 @@
 import React, {
-  createContext, useCallback, useContext, useEffect,
+  useCallback,  useEffect,
   useMemo, useRef, useState,
 } from "react";
+import { PlayerContext } from "./context";
 import { SONGS } from "../audio/songs";
 import type { Song, ErrorLevel } from "../interfaces/sound";
 
@@ -21,8 +22,6 @@ type PlayerState = {
   play: () => Promise<void>;
   pause: () => Promise<void>;
 };
-
-const PlayerContext = createContext<PlayerState | null>(null);
 
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -72,6 +71,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const loadFragment = useCallback(async () => {
     const frag = currentSection.variants[userErrorLevel];
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const moduleUrl = (frag as unknown as any).module;
     if (!frag || !moduleUrl) {
       console.error("loadFragment: fragment missing module url", { songIndex: slide.songIndex, sectionIndex: slide.sectionIndex });
@@ -102,6 +102,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audio.removeEventListener("loadedmetadata", onLoaded);
       detach();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSection, userErrorLevel, attachAudioEvents]);
 
   const goTo = useCallback(async (songIndex: number, sectionIndex: number) => {
@@ -126,6 +127,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return () => {
       if (cleanup) cleanup();
       audioRef.current?.pause();
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
       audioRef.current && (audioRef.current.src = "");
     };
   }, [loadFragment]);
@@ -150,12 +152,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
-};
-
-export const usePlayer = () => {
-  const ctx = useContext(PlayerContext);
-  if (!ctx) throw new Error("usePlayer must be used within PlayerProvider");
-  return ctx;
 };
 
 export default PlayerProvider;
