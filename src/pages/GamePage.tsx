@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import useControlGame from "@/hooks/useControlGame";
 import { usePlayer } from "@/hooks/usePlayer";
+import CanvasGameSection from "@/components/GameOrq";
+import { Application } from "@pixi/react";
 
 export default function GamePage() {
     const control = useControlGame();
@@ -17,7 +19,17 @@ export default function GamePage() {
 
     return (
         <div style={{ padding: 16, maxWidth: 720 }}>
-            
+            <Application resizeTo={window}>
+                <CanvasGameSection />
+            </Application>
+
+            {/* Small debug / controls summary */}
+            <div style={{ marginTop: 12, fontSize: 14, color: "#222" }}>
+                <div>Sección: {control.soundState} · Error: {control.errorState}</div>
+                <div>
+                    Tiempo: {fmt(position)} / {fmt(duration)}
+                </div>
+            </div>
         </div>
     );
 }
