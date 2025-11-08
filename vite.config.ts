@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import tsconfigPaths from 'vite-tsconfig-paths'
+import checker from 'vite-plugin-checker'
+
+
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -10,6 +14,8 @@ export default defineConfig({
         plugins: [['babel-plugin-react-compiler']],
       },
     }),
-    tailwindcss()
+    tailwindcss(), tsconfigPaths(), checker({
+    typescript:true
+  })
   ],
 })
