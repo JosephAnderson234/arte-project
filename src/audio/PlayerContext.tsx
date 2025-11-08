@@ -1,6 +1,6 @@
 import React, {
-	createContext, useCallback, useContext, useEffect,
-	useMemo, useRef, useState,
+  createContext, useCallback, useContext, useEffect,
+  useMemo, useRef, useState,
 } from "react";
 import { Audio } from "expo-av";
 import { SONGS } from "./songs";
@@ -10,135 +10,113 @@ import { Platform } from "react-native";
 type SlideRef = { songIndex: number; sectionIndex: number };
 
 type PlayerState = {
-	currentSlide: number;
-	slide: SlideRef;
-	currentSong: Song;
-	currentSectionId: "seccion1" | "seccion2" | "seccion3" | "seccion4";
+  currentSong: Song;
+  currentSectionId: "seccion1" | "seccion2" | "seccion3" | "seccion4";
 
-	userErrorLevel: ErrorLevel;
+  isPlaying: boolean;
+  durationMs: number;
 
-	isPlaying: boolean;
-	positionMs: number;
-	durationMs: number;
+  getPositionMs: () => number;
 
-	setUserErrorLevel: (lvl: ErrorLevel) => void;
-	goTo: (songIndex: number, sectionIndex: number) => Promise<void>;
-	nextSlide: () => Promise<void>;
-	prevSlide: () => Promise<void>;
-	play: () => Promise<void>;
-	pause: () => Promise<void>;
-	playCurrentFragment: () => Promise<void>;
+  getAllSongs: () => Song[];
+
+  goTo: (songIndex: number, sectionIndex: number) => Promise<void>;
+  play: () => Promise<void>;
+  pause: () => Promise<void>;
 };
 
 const PlayerContext = createContext<PlayerState | null>(null);
 
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-	const [currentSlide, setCurrentSlide] = useState(0);
-	const [userErrorLevel, setUserErrorLevel] = useState<ErrorLevel>(0);
-	const [isPlaying, setIsPlaying] = useState(false);
-	const [positionMs, setPositionMs] = useState(0);
-	const [durationMs, setDurationMs] = useState(0);
-	const soundRef = useRef<Audio.Sound | null>(null);
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [userErrorLevel] = useState<ErrorLevel>(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [positionMs, setPositionMs] = useState(0);
+  const [durationMs, setDurationMs] = useState(0);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
-	const totalSlides = SONGS.length * 4;
+  const totalSlides = SONGS.length * 4;
 
-	const slide = useMemo<SlideRef>(() => ({
-		songIndex: Math.floor(currentSlide / 4),
-		sectionIndex: currentSlide % 4,
-	}), [currentSlide]);
+  const slide = useMemo<SlideRef>(() => ({
+    songIndex: Math.floor(currentSlide / 4),
+    sectionIndex: currentSlide % 4,
+  }), [currentSlide]);
 
-	const currentSong = SONGS[slide.songIndex];
-	const currentSection = currentSong.sections[slide.sectionIndex];
-	const currentSectionId = currentSection.id;
+  const currentSong = SONGS[slide.songIndex];
+  const currentSection = currentSong.sections[slide.sectionIndex];
+  const currentSectionId = currentSection.id;
 
-	const loadFragment = useCallback(async () => {
-		const frag = currentSection.variants[userErrorLevel];
+  const loadFragment = useCallback(async () => {
+    const frag = currentSection.variants[userErrorLevel];
 
-		try { await soundRef.current?.unloadAsync(); } catch { }
-		const { sound } = await Audio.Sound.createAsync(
-			frag.module,
-			{
-				shouldPlay: false,
-				progressUpdateIntervalMillis: 150,
-			}
-		);
-		soundRef.current = sound;
-		sound.setOnPlaybackStatusUpdate((s: any) => {
-			if (!s?.isLoaded) return;
-			setIsPlaying(!!s.isPlaying);
-			setPositionMs(s.positionMillis ?? 0);
-			setDurationMs(s.durationMillis ?? 0);
+    try { await soundRef.current?.unloadAsync(); } catch {}
+    const { sound } = await Audio.Sound.createAsync(
+      frag.module,
+      {
+        shouldPlay: false,
+        progressUpdateIntervalMillis: 150,
+      }
+    );
+    soundRef.current = sound;
+    sound.setOnPlaybackStatusUpdate((s: any) => {
+      if (!s?.isLoaded) return;
+      setIsPlaying(!!s.isPlaying);
+      setPositionMs(s.positionMillis ?? 0);
+      setDurationMs(s.durationMillis ?? 0);
+    });
+  }, [currentSection, userErrorLevel]);
 
-		});
-	}, [currentSection, userErrorLevel]);
+  const goTo = useCallback(async (songIndex: number, sectionIndex: number) => {
+    const idx = songIndex * 4 + sectionIndex;
+    if (idx < 0 || idx >= totalSlides) return;
+    setCurrentSlide(idx);
+    await loadFragment();
+  }, [totalSlides, loadFragment]);
 
-	const goTo = useCallback(async (songIndex: number, sectionIndex: number) => {
-		const idx = songIndex * 4 + sectionIndex;
-		if (idx < 0 || idx >= totalSlides) return;
-		setCurrentSlide(idx);
-		await loadFragment();
-	}, [totalSlides, loadFragment]);
+  const play = useCallback(async () => { await soundRef.current?.playAsync(); }, []);
+  const pause = useCallback(async () => { await soundRef.current?.pauseAsync(); }, []);
 
-	const nextSlide = useCallback(async () => {
-		const next = Math.min(currentSlide + 1, totalSlides - 1);
-		setCurrentSlide(next);
-		await loadFragment();
-	}, [currentSlide, totalSlides, loadFragment]);
+  const playCurrentFragment = useCallback(async () => {
+    if (!soundRef.current) await loadFragment();
+    await soundRef.current?.playAsync();
+  }, [loadFragment]);
 
-	const prevSlide = useCallback(async () => {
-		const prev = Math.max(currentSlide - 1, 0);
-		setCurrentSlide(prev);
-		await loadFragment();
-	}, [currentSlide, loadFragment]);
+  useEffect(() => {
+    (async () => {
+      if (Platform.OS !== "web") {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+        });
+      }
+      await loadFragment();
+    })();
+    return () => { soundRef.current?.unloadAsync(); };
+  }, []); 
 
-	const play = useCallback(async () => { await soundRef.current?.playAsync(); }, []);
-	const pause = useCallback(async () => { await soundRef.current?.pauseAsync(); }, []);
+  useEffect(() => { (async () => { await loadFragment(); })(); }, [currentSlide, loadFragment]);
 
-	const playCurrentFragment = useCallback(async () => {
-		if (!soundRef.current) await loadFragment();
-		await soundRef.current?.playAsync();
-	}, [loadFragment]);
+  const getPositionMs = useCallback(() => positionMs, [positionMs]);
+  const getAllSongs = useCallback(() => SONGS, []);
 
-	useEffect(() => {
-		(async () => {
-			if (Platform.OS !== "web") {
-				await Audio.setAudioModeAsync({
-					playsInSilentModeIOS: true,
-					staysActiveInBackground: false,
-					shouldDuckAndroid: true,
-				});
-			}
-			await loadFragment();
-		})();
-		return () => { soundRef.current?.unloadAsync(); };
-	}, []);
+  const value: PlayerState = {
+    currentSong,
+    currentSectionId,
+    isPlaying,
+    durationMs,
+    getPositionMs,
+    getAllSongs,
+    goTo,
+    play,
+    pause,
+  };
 
-	useEffect(() => { (async () => { await loadFragment(); })(); }, [userErrorLevel, currentSlide, loadFragment]);
-
-	//preferiria que existiera el valor que me retorne el tiempo de reproduccion actual y un get de todas las caciones
-	const value: PlayerState = {
-		currentSlide, //delete
-		slide, //delete 
-		currentSong,
-		currentSectionId,
-		userErrorLevel, //delete
-		isPlaying,
-		positionMs, //delete
-		durationMs,
-		setUserErrorLevel, //delete
-		goTo,
-		nextSlide, //delete
-		prevSlide, //delete
-		play,
-		pause,
-		playCurrentFragment, //delete
-	};
-
-	return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
+  return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
 };
 
 export const usePlayer = () => {
-	const ctx = useContext(PlayerContext);
-	if (!ctx) throw new Error("usePlayer must be used within PlayerProvider");
-	return ctx;
+  const ctx = useContext(PlayerContext);
+  if (!ctx) throw new Error("usePlayer must be used within PlayerProvider");
+  return ctx;
 };
