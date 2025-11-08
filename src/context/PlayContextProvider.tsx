@@ -1,47 +1,33 @@
 import React, {
   useCallback,  useEffect,
-  useMemo, useRef, useState,
+  useRef, useState,
 } from "react";
 import { PlayerContext } from "./context";
+import useControlGame from "@/hooks/useControlGame";
 import { SONGS } from "../audio/songs";
-import type { Song, ErrorLevel } from "../interfaces/sound";
+import type { ErrorLevel } from "../interfaces/sound";
+import type { PlayerState as PlayerStateType } from "../interfaces/context";
 
-type SlideRef = { songIndex: number; sectionIndex: number };
-
-type PlayerState = {
-  currentSong: Song;
-  currentSectionId: "seccion1" | "seccion2" | "seccion3" | "seccion4";
-
-  isPlaying: boolean;
-  durationMs: number;
-
-  getPositionMs: () => number;
-  getAllSongs: () => Song[];
-
-  goTo: (songIndex: number, sectionIndex: number) => Promise<void>;
-  play: () => Promise<void>;
-  pause: () => Promise<void>;
-};
+// SlideRef removed — using explicit songIndex/sectionIndex state
 
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentSlide, setCurrentSlide] = useState(0);
-  const [userErrorLevel] = useState<ErrorLevel>(0); 
+  // single-song model: only one song with two sections (no songIndex)
+  const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
+  const [volume, setVolumeState] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const totalSlides = SONGS.length * 4;
+  // single song instance
+  const currentSong = SONGS[0];
 
-  const slide = useMemo<SlideRef>(() => ({
-    songIndex: Math.floor(currentSlide / 4),
-    sectionIndex: currentSlide % 4,
-  }), [currentSlide]);
-
-  const currentSong = SONGS[slide.songIndex];
-  const currentSection = currentSong.sections[slide.sectionIndex];
-  const currentSectionId = currentSection.id;
+  // --- error mapping: use control context to determine which variant to pick
+  const { errorState, soundState, setErrorState, setSoundState } = useControlGame();
+  // enforce rules: allow 0..2 error layers (0 = no error, 1 = minor, 2 = major)
+  const userErrorLevel = Math.max(0, Math.min(2, Number(errorState))) as ErrorLevel;
 
   const attachAudioEvents = useCallback((audio: HTMLAudioElement) => {
     const onTime = () => {
@@ -67,27 +53,37 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audio.removeEventListener("ended", onEnded);
     };
   }, []);
+  // loadFragment ahora acepta overrides opcionales para song/section
+  const loadFragment = useCallback(async (opts?: { sectionIndex?: number }) => {
+    const sectionIdx = typeof opts?.sectionIndex === 'number' ? opts.sectionIndex : currentSectionIndex;
 
-  const loadFragment = useCallback(async () => {
-    const frag = currentSection.variants[userErrorLevel];
+    const song = SONGS[0]; // single song
+    const section = song?.sections?.[sectionIdx];
+    const frag = section?.variants?.[userErrorLevel];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const moduleUrl = (frag as unknown as any).module;
+    const moduleUrl = (frag as unknown as any)?.module;
     if (!frag || !moduleUrl) {
-      console.error("loadFragment: fragment missing module url", { songIndex: slide.songIndex, sectionIndex: slide.sectionIndex });
+      console.error("loadFragment: fragment missing module url", { sectionIndex: sectionIdx });
       setDurationMs(0);
       audioRef.current = null;
       return () => {};
     }
 
+    // pause and cleanup previous audio
     if (audioRef.current) {
-      audioRef.current.pause();
+      if (!audioRef.current.paused) audioRef.current.pause();
+      // remove src to release resource
+      audioRef.current.src = "";
+      audioRef.current = null;
     }
 
-  const audio = new Audio();
-  audio.src = String(moduleUrl);
-    audio.preload = "auto";         
+    const audio = new Audio();
+    audio.src = String(moduleUrl);
+    audio.preload = "auto";
     audio.crossOrigin = "anonymous";
+    audio.volume = isMuted ? 0 : volume;
+    audio.muted = isMuted;
 
     const detach = attachAudioEvents(audio);
     audioRef.current = audio;
@@ -102,53 +98,99 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audio.removeEventListener("loadedmetadata", onLoaded);
       detach();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSection, userErrorLevel, attachAudioEvents]);
-
-  const goTo = useCallback(async (songIndex: number, sectionIndex: number) => {
-    const idx = songIndex * 4 + sectionIndex;
-    if (idx < 0 || idx >= totalSlides) return;
-    setCurrentSlide(idx);
-    await loadFragment();
-  }, [totalSlides, loadFragment]);
+  }, [currentSectionIndex, userErrorLevel, attachAudioEvents, isMuted, volume]);
 
   const play = useCallback(async () => {
     if (!audioRef.current) await loadFragment();
-    await audioRef.current?.play();
+    try { await audioRef.current?.play(); } catch { /* play rejected or no audio */ }
   }, [loadFragment]);
+
+  // public goTo: navigates by section name and error level
+  const goTo = useCallback(async (sectionName: import("../interfaces/control").SoundState, errorLevel: ErrorLevel) => {
+    const map: Record<string, number> = { seccion1: 0, seccion2: 1 };
+    const sectionIndex = map[sectionName] ?? 0;
+    if (typeof setErrorState === 'function') setErrorState(errorLevel);
+    if (typeof setSoundState === 'function') setSoundState(sectionName);
+    const wasPlaying = isPlaying;
+    setCurrentSectionIndex(sectionIndex);
+    await loadFragment({ sectionIndex });
+    if (wasPlaying) await play();
+  }, [setErrorState, setSoundState, isPlaying, loadFragment, play]);
 
   const pause = useCallback(async () => {
     audioRef.current?.pause();
   }, []);
+
+  const togglePlay = useCallback(async () => {
+    if (isPlaying) await pause(); else await play();
+  }, [isPlaying, pause, play]);
+
+  const seek = useCallback(async (ms: number) => {
+    const s = Math.max(0, ms / 1000);
+    if (audioRef.current) {
+      try { audioRef.current.currentTime = s; } catch { /* ignore invalid seek */ }
+      setPositionMs(s * 1000);
+    }
+  }, []);
+
+  // wrapper para cumplir la interfaz: ir a una sección por nombre de soundState
+  // next/prev removed (not part of canonical PlayerState) — use goTo wrapper instead when needed
+
+  const setVolume = useCallback((v: number) => {
+    const vol = Math.max(0, Math.min(1, v));
+    setVolumeState(vol);
+    if (audioRef.current) {
+      audioRef.current.volume = vol;
+      if (isMuted) audioRef.current.muted = true;
+    }
+  }, [isMuted]);
+
+  const mute = useCallback(() => {
+    setIsMuted(true);
+    if (audioRef.current) audioRef.current.muted = true;
+  }, []);
+
+  const unmute = useCallback(() => {
+    setIsMuted(false);
+    if (audioRef.current) {
+      audioRef.current.muted = false;
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
 
   useEffect(() => {
     let cleanup: (() => void) | void;
     (async () => { cleanup = await loadFragment(); })();
     return () => {
       if (cleanup) cleanup();
-      audioRef.current?.pause();
-      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-      audioRef.current && (audioRef.current.src = "");
+      if (audioRef.current) audioRef.current.pause();
+      if (audioRef.current) audioRef.current.src = "";
     };
-  }, [loadFragment]);
-
-  useEffect(() => {
-    (async () => { await loadFragment(); })();
-  }, [currentSlide, loadFragment]);
+  }, [loadFragment, currentSectionIndex, userErrorLevel]);
 
   const getPositionMs = useCallback(() => positionMs, [positionMs]);
-  const getAllSongs = useCallback(() => SONGS, []);
 
-  const value: PlayerState = {
-    currentSong,
-    currentSectionId,
+  const value: PlayerStateType = {
+  currentSong,
+    currentSoundState: soundState,
+    currentErrorLevel: userErrorLevel,
     isPlaying,
     durationMs,
+    positionMs,
+    volume,
+    isMuted,
+    totalSongs: SONGS.length,
+
+    setErrorLevel: (l: ErrorLevel) => { if (typeof setErrorState === 'function') setErrorState(l); },
     getPositionMs,
-    getAllSongs,
-    goTo,
     play,
     pause,
+    togglePlay,
+  goTo: goTo,
+    setVolume,
+    mute,
+    unmute,
+    setPositionMs: (ms: number) => { void seek(ms); },
   };
 
   return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
