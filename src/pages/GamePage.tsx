@@ -1,13 +1,10 @@
-import { useMemo } from "react";
+import { useMemo } from 'react';
 import useControlGame from "@/hooks/useControlGame";
 import { usePlayer } from "@/hooks/usePlayer";
-import CanvasGameSection from "@/components/GameOrq";
-import { Application } from "@pixi/react";
 
 export default function GamePage() {
     const control = useControlGame();
     const player = usePlayer();
-
     const duration = useMemo(() => Math.round((player.durationMs || 0) / 1000), [player.durationMs]);
     const position = Math.round((player.positionMs || 0) / 1000);
 
@@ -18,10 +15,7 @@ export default function GamePage() {
     };
 
     return (
-        <div style={{ padding: 16, maxWidth: 720 }}>
-            <Application resizeTo={window}>
-                <CanvasGameSection />
-            </Application>
+        <div  className="w-full"  >
 
             {/* Small debug / controls summary */}
             <div style={{ marginTop: 12, fontSize: 14, color: "#222" }}>
