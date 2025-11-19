@@ -11,7 +11,7 @@ import type { PlayerState as PlayerStateType } from "../interfaces/context";
 // SlideRef removed — using explicit songIndex/sectionIndex state
 
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // single-song model: only one song with two sections (no songIndex)
+  // single-song model: one song with up to four sections (no songIndex)
   const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
@@ -26,8 +26,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   // --- error mapping: use control context to determine which variant to pick
   const { errorState, soundState, setErrorState, setSoundState } = useControlGame();
-  // enforce rules: allow 0..2 error layers (0 = no error, 1 = minor, 2 = major)
-  const userErrorLevel = Math.max(0, Math.min(2, Number(errorState))) as ErrorLevel;
+  // enforce rules: allow 0..4 error layers (0 = no error, up to 4 = max errors)
+  const userErrorLevel = Math.max(0, Math.min(4, Number(errorState))) as ErrorLevel;
 
   const attachAudioEvents = useCallback((audio: HTMLAudioElement) => {
     const onTime = () => {
@@ -55,59 +55,71 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
   // loadFragment ahora acepta overrides opcionales para song/section
   const loadFragment = useCallback(async (opts?: { sectionIndex?: number }) => {
-    const sectionIdx = typeof opts?.sectionIndex === 'number' ? opts.sectionIndex : currentSectionIndex;
+  const sectionIdx = typeof opts?.sectionIndex === 'number' ? opts.sectionIndex : currentSectionIndex;
 
-    const song = SONGS[0]; // single song
-    const section = song?.sections?.[sectionIdx];
-    const frag = section?.variants?.[userErrorLevel];
+  const song = SONGS[0]; // single song
+  const section = song?.sections?.[sectionIdx];
+  const frag = section?.variants?.[userErrorLevel];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const moduleUrl = (frag as unknown as any)?.module;
-    if (!frag || !moduleUrl) {
-      console.error("loadFragment: fragment missing module url", { sectionIndex: sectionIdx });
-      setDurationMs(0);
-      audioRef.current = null;
-      return () => {};
-    }
+  const moduleUrl = (frag as unknown as any)?.module;
+  const fragmentDuration = (frag as any)?.duration; 
+  if (!frag || !moduleUrl) {
+    console.error("loadFragment: fragment missing module url", { sectionIndex: sectionIdx });
+    setDurationMs(0);
+    audioRef.current = null;
+    return () => {};
+  }
 
-    // pause and cleanup previous audio
-    if (audioRef.current) {
-      if (!audioRef.current.paused) audioRef.current.pause();
-      // remove src to release resource
-      audioRef.current.src = "";
-      audioRef.current = null;
-    }
+  // pause and cleanup previous audio
+  if (audioRef.current) {
+    if (!audioRef.current.paused) audioRef.current.pause();
+    audioRef.current.src = "";
+    audioRef.current = null;
+  }
 
-    const audio = new Audio();
-    audio.src = String(moduleUrl);
-    audio.preload = "auto";
-    audio.crossOrigin = "anonymous";
-    audio.volume = isMuted ? 0 : volume;
-    audio.muted = isMuted;
+  const audio = new Audio();
+  audio.src = String(moduleUrl);
+  audio.preload = "auto";
+  audio.crossOrigin = "anonymous";
+  audio.volume = isMuted ? 0 : volume;
+  audio.muted = isMuted;
 
-    const detach = attachAudioEvents(audio);
-    audioRef.current = audio;
+  const detach = attachAudioEvents(audio);
+  audioRef.current = audio;
 
-    const onLoaded = () => {
-      const d = Number.isFinite(audio.duration) ? audio.duration : 0;
-      setDurationMs(d * 1000);
-    };
-    audio.addEventListener("loadedmetadata", onLoaded);
+  const onLoaded = () => {
+    const d = fragmentDuration || (Number.isFinite(audio.duration) ? audio.duration : 0);
+    setDurationMs(d * 1000); // Usamos la duración personalizada si está presente
+  };
+  audio.addEventListener("loadedmetadata", onLoaded);
 
-    return () => {
-      audio.removeEventListener("loadedmetadata", onLoaded);
-      detach();
-    };
-  }, [currentSectionIndex, userErrorLevel, attachAudioEvents, isMuted, volume]);
+  return () => {
+    audio.removeEventListener("loadedmetadata", onLoaded);
+    detach();
+  };
+}, [currentSectionIndex, userErrorLevel, attachAudioEvents, isMuted, volume]);
 
   const play = useCallback(async () => {
     if (!audioRef.current) await loadFragment();
-    try { await audioRef.current?.play(); } catch { /* play rejected or no audio */ }
-  }, [loadFragment]);
 
+    try {
+      await audioRef.current?.play();
+
+      if (durationMs) {
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.pause();
+            setPositionMs(0);
+          }
+        }, durationMs);
+      }
+    } catch (error) {
+      console.error("Error al reproducir el audio:", error);
+    }
+  }, [loadFragment, durationMs]);
   // public goTo: navigates by section name and error level
   const goTo = useCallback(async (sectionName: import("../interfaces/control").SoundState, errorLevel: ErrorLevel) => {
-    const map: Record<string, number> = { seccion1: 0, seccion2: 1 };
+    const map: Record<string, number> = { seccion1: 0, seccion2: 1, seccion3: 2, seccion4: 3 };
     const sectionIndex = map[sectionName] ?? 0;
     if (typeof setErrorState === 'function') setErrorState(errorLevel);
     if (typeof setSoundState === 'function') setSoundState(sectionName);
@@ -118,7 +130,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [setErrorState, setSoundState, isPlaying, loadFragment, play]);
 
   const pause = useCallback(async () => {
-    audioRef.current?.pause();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      setPositionMs(audioRef.current.currentTime * 1000);
+    }
   }, []);
 
   const togglePlay = useCallback(async () => {
